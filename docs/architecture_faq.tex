@@ -1,0 +1,151 @@
+\documentclass[11pt, a4paper]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{parskip}
+
+\title{\textbf{Comprehensive Q\&A Reference}\\ \Large COW-QKD Simulation Framework}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section*{Overview}
+This document provides a comprehensive, 40-question technical FAQ covering every layer of the COW-QKD simulation framework. It ranges from fundamental definitions to the most rigorous mathematical justifications of the system's architecture, optimization, and adversarial modeling.
+
+% ---------------------------------------------------------
+\section{Layer 1: Observable \& Quantum Physics (Strawberry Fields)}
+
+\textbf{Q1: What is the primary function of Layer 1 in the COW-QKD simulation framework?} \\
+\textbf{A:} Layer 1 maps physical hardware configurations (mean photon number $\mu$, transmittance $t_B$, channel loss) to pure, noise-free single-opportunity quantum click probabilities using exact continuous-variable optical propagation.
+
+\textbf{Q2: What does the term ``pulse'' mean in this codebase, and how does it physically differ from a ``round''?} \\
+\textbf{A:} A ``pulse'' is a single optical time bin. A ``round'' (or logical qubit) consists of a \textit{pair} of consecutive time bins. Signal rounds have one populated pulse and one vacuum pulse; decoy rounds have either two populated pulses ($|\alpha, \alpha\rangle$) or none ($|0, 0\rangle$).
+
+\textbf{Q3: Why does the framework use Strawberry Fields' Gaussian backend instead of a Fock-state approximation?} \\
+\textbf{A:} COW-QKD encodes information using weak coherent pulses. The Gaussian backend simulates coherent states through linear optics (beamsplitters, phase shifts, loss) exactly, without the state-truncation errors and dimensional explosion inherent in Fock-space approximations.
+
+\textbf{Q4: Why does the Strawberry Fields circuit output continuous probabilities rather than discrete measurement outcomes?} \\
+\textbf{A:} Coherent states remain exactly coherent under linear optics. The output amplitude is deterministic for a given configuration. Computing the exact Poissonian threshold-click probability once and sampling it classically (in Layer 2) is mathematically equivalent to simulating the optical path for every individual pulse, but computationally feasible.
+
+\textbf{Q5: How does the framework differentiate between the \texttt{passive} basis choice and the \texttt{active} basis choice mathematically?} \\
+\textbf{A:} \texttt{passive} models Bob's random choice as a physical beamsplitter (attenuating the data line by $t_B$ and introducing a joint-no-click condition). \texttt{active} models an optical switch routing the full amplitude to one line, meaning no $t_B$ attenuation on the data line and dropping the $(1-p_d)$ joint-no-click prefactors from the monitor gain formulas.
+
+\textbf{Q6: What is ``per-round photon accounting'' in the monitor-line circuit?} \\
+\textbf{A:} Rather than routing an arm-split fraction of light into a single time-gated bin, the SF circuit routes the round's \textit{entire} two-pulse amplitude budget into a single recombination event. This correctly treats the two-pulse round as the discrete trial, matching standard decoy-state QKD security conventions.
+
+\textbf{Q7: How does the simulation natively model imperfect interference visibility ($V < 1$)?} \\
+\textbf{A:} It models visibility loss as genuine Gaussian phase-jitter $\delta \sim \mathcal{N}(0, \sigma^2)$ using 12-node Gauss-Hermite quadrature over the SF circuit. This perfectly conserves energy unitarily across the bright and dark ports, which is physically superior to simply subtracting an ad hoc $(1-V)/(1+V)$ fraction from the bright port.
+
+\textbf{Q8: Why must the internal recombination phase of the monitor-line circuit be set to exactly $\phi=\pi$?} \\
+\textbf{A:} Setting $\phi=\pi$ represents genuine constructive interference at the bright port. This is the only phase convention that correctly recovers the exact analytical exponents derived by Gao et al. (e.g., $2\mu(1-t_B)\eta$).
+
+\textbf{Q9: Explain how the framework manages to simultaneously reproduce both the signal-state ($c_1$) and decoy-state ($Q^{M0}_{\alpha\alpha}$) closed-form formulas using a single topology.} \\
+\textbf{A:} A signal round has one populated pulse, so the recombination event splits that single pulse's power equally, yielding exactly the $c_1$ exponent. A decoy round has two equal, in-phase pulses that perfectly interfere, routing the combined budget to the bright port and yielding the full $2\mu(1-t_B)\eta$ exponent. One physical topology naturally accounts for both.
+
+\textbf{Q10: Prove why simulating the coherent-state propagation once per hardware configuration is mathematically identical to simulating the full optical path for every individual pulse.} \\
+\textbf{A:} Linear optics on an input coherent state $|\alpha\rangle$ strictly yields an output coherent state $|\beta\rangle$. Ideal threshold detection yields a click probability $P = 1 - \exp(-|\beta|^2)$. Because $|\beta|$ depends only on static channel parameters, the quantum state is identical for every pulse of a given type. Independent Poisson measurements commute perfectly with the classical binomial sampling of these fixed probabilities.
+
+% ---------------------------------------------------------
+\section{Layer 2: Detectors \& Randomness (Monte Carlo)}
+
+\textbf{Q11: What specific physical hardware phenomena are modeled in Layer 2?} \\
+\textbf{A:} Layer 2 introduces classical hardware noise—specifically SPAD dark counts and SNSPD dead time recovery windows—as well as finite-sample statistical fluctuations.
+
+\textbf{Q12: Why are detector dark counts and dead time handled in this classical layer rather than in Layer 1?} \\
+\textbf{A:} Dark counts (thermal/tunneling events) and dead time are classical electronics phenomena independent of the quantum optical field. Isolating them allows the framework to scale block sizes up to $10^{12}$ and apply classical noise instantaneously without re-running heavy quantum simulations.
+
+\textbf{Q13: What statistical distribution is used to sample the raw click counts from the quantum probabilities?} \\
+\textbf{A:} A Multinomial distribution dictates state preparation (Alice's random choice of signal/decoy). Then, a Binomial distribution generates threshold clicks based on Layer 1's exact probabilities.
+
+\textbf{Q14: If Layer 1 provides exact analytical probabilities, why is Monte Carlo binomial sampling strictly necessary?} \\
+\textbf{A:} Finite-key bounds specifically penalize statistical variance. Feeding exact probabilities into the bounds simulates an infinite-key asymptotic regime, which inherently invalidates any finite-key security proof.
+
+\textbf{Q15: How does the framework manage random number generator (RNG) seeds?} \\
+\textbf{A:} Seeds are varied during final evaluation and stationarity checks to capture genuine finite-sample variance. However, the seed is strictly \textit{fixed} during optimization to ensure smooth objective gradients, preventing the optimizer from chasing statistical noise.
+
+\textbf{Q16: Why is a dead time parameter of 100 ns considered statistically ``non-binding''?} \\
+\textbf{A:} At a 250 MHz round rate with realistic fiber loss (e.g., $L=25$ km), actual click rates are $\sim 63$ kHz. The non-paralyzable ceiling for a 100 ns dead time is 10 MHz. Because the actual click rate is orders of magnitude below the ceiling, dead time does not choke the key rate.
+
+\textbf{Q17: How does the independent-process dark-count combination formula differ from the combinatorial prefactors used in standard closed-form proofs?} \\
+\textbf{A:} The framework uses $P_{\text{total}} = 1-(1-P_{\text{quantum}})(1-p_{\text{dark}})$, whereas Gao uses combinatorial factors like $(1-p_{\text{dark}})^3$. Because $p_{\text{dark}} \sim 10^{-8}$, higher-order terms vanish, making the numerical difference between the two conventions entirely negligible.
+
+\textbf{Q18: Explain the statistical risk of ``false zeroes'' in decoy counts at extreme channel distances ($L \ge 75$ km).} \\
+\textbf{A:} At extreme loss, true detection probabilities drop below $10^{-6}$. Binomial draws of such rare events across finite blocks frequently yield exactly 0 clicks. This causes Kato and Azuma bounds to encounter 0 variance or division-by-zero errors, swinging the key rate wildly.
+
+\textbf{Q19: Why must the \texttt{num\_sf\_pulses} variable strictly match $N_{\text{target}}$ during the final statistical evaluation?} \\
+\textbf{A:} Kato and Azuma bounds use sample size $k$ to define the tightness of their confidence intervals. If we sample fewer pulses, the bounds correctly calculate wide error bars; we cannot manually scale those counts up to $N_{\text{target}}$ without lying to the mathematical bound about how many independent trials actually occurred.
+
+\textbf{Q20: Exactly how does linearly scaling a $10^6$ sample up to $10^{11}$ invalidate finite-key intervals?} \\
+\textbf{A:} Standard error scales as $1/\sqrt{N}$. If we draw $10^6$ pulses, the relative statistical noise is high. If we multiply those resulting counts by $10^5$, we are feeding the security bound counts that \textit{look} like they came from $N=10^{11}$, but they still carry the wide variance of $N=10^6$. This is statistically fictitious and breaks the Chernoff/Hoeffding inequality assumptions.
+
+% ---------------------------------------------------------
+\section{Layer 3: Security Bounds \& Adversarial Models}
+
+\textbf{Q21: What is the primary role of Layer 3?} \\
+\textbf{A:} Layer 3 mimics Bob's post-processing by applying mathematical concentration inequalities on the raw, noisy detector record to bound Eve's information and extract the secure key rate.
+
+\textbf{Q22: Name the bounds implemented in this framework.} \\
+\textbf{A:} Kato and Azuma (Finite-key bounds); Gao and Cao (Asymptotic bounds).
+
+\textbf{Q23: What is the fundamental difference between an ``Observable-Changing'' attack and an ``Observable-Invisible'' attack?} \\
+\textbf{A:} Observable-Changing attacks (like USD or Intercept-Resend) actively perturb the coherence or clicks Bob receives and are injected upstream into the MC simulation. Observable-Invisible attacks (like Beam-Splitting) exploit passive leaks without altering Bob's stats, and are thus implemented as theoretical rate ceilings.
+
+\textbf{Q24: How is the Unambiguous State Discrimination (USD4b) attack mathematically modeled?} \\
+\textbf{A:} On a fraction $q_3$ of $\alpha\alpha$ rounds, Eve performs USD. Conclusive rounds yield perfect $V=1$ bright-port clicks (and $0$ dark-port flux). Inconclusive rounds yield nothing. This is mixed proportionally into the true monitor line gains.
+
+\textbf{Q25: Why are Observable-Invisible attacks implemented as theoretical rate ceilings?} \\
+\textbf{A:} Because Eve's attack relies on leaked photons, Bob's detection statistics are unperturbed. Running the MC simulation with the attack ``on'' looks identical to ``off''. Security requires that Bob's calculated bound strictly lies \textit{below} Eve's maximum allowable information ceiling.
+
+\textbf{Q26: How does the framework integrate misalignment error ($e_d$)?} \\
+\textbf{A:} It is applied as a linear additive error ($E_z = \text{measured } E_z + e_d$) representing baseline optical axis misalignment, strictly before the security bounds are evaluated.
+
+\textbf{Q27: Why is the intercept-resend (IR) attack probability modeled as a \textit{per-round} strategic choice?} \\
+\textbf{A:} I-R breaks coherence across the pair. Eve must attack the \textit{pair} (the round) to extract the bit; attempting to measure and resend individual pulses independently destroys the COW state format detectably.
+
+\textbf{Q28: Why would a literal transcription of the backflash attack's published equation (Eq. 6) fail to provide an apples-to-apples rate ceiling?} \\
+\textbf{A:} The paper's Eq 6 has no phase-error ($E_p$) term. A direct transcription would effectively erase Kato/Azuma's $E_p$ penalty. Instead, the framework subtracts the backflash leakage rate directly from the honest, $E_p$-aware Kato rate to preserve the penalty.
+
+\textbf{Q29: Why does the Kato bound result in a tighter secure key rate than the Azuma bound when the decoy click rate deviates significantly from 1/2?} \\
+\textbf{A:} Azuma relies on standard Azuma-Hoeffding inequalities, which are loose for highly skewed distributions (like very small decoy error rates). Kato's inequality leverages the empirical variance, tightening the confidence interval specifically for low-variance edge cases.
+
+\textbf{Q30: Derive how the Beam-Splitting (BS) attack ceiling restricts the rate based solely on raw channel transmittance.} \\
+\textbf{A:} Gisin 2004 assumes Eve only controls the channel, not Bob's lab. Eve replaces the lossy channel with a lossless one and a beamsplitter of transmittance $t_{fiber}$. She keeps $1-t_{fiber}$ of the signal. The ceiling is derived strictly from this split, leaving Bob's local detector inefficiencies as trusted parameters Eve cannot exploit.
+
+% ---------------------------------------------------------
+\section{Layer 4: Orchestrator \& Optimization}
+
+\textbf{Q31: What is the primary role of the Orchestrator layer?} \\
+\textbf{A:} It wires Layers 1-3 together and manages parameter sweeps, state, and optimizations without modifying the core physical logic.
+
+\textbf{Q32: Which two physical protocol parameters are jointly optimized by the framework to maximize the secure key rate?} \\
+\textbf{A:} Mean photon number ($\mu$) and beamsplitter transmittance ($t_B$).
+
+\textbf{Q33: Why does the framework use Differential Evolution instead of a standard local optimizer like Nelder-Mead?} \\
+\textbf{A:} Finite-key bounds create steep cliffs. If parameters drift slightly into an insecure regime, the key rate drops to exactly 0.0, creating massive flat plateaus. Local optimizers get trapped because there is zero local gradient. Differential Evolution is a global optimizer capable of hopping across these plateaus.
+
+\textbf{Q34: What is the ``insecure plateau'' problem?} \\
+\textbf{A:} Regions of the $(\mu, t_B)$ parameter space where the combination of loss and statistical error causes the finite-key bound to evaluate strictly to zero. A flat objective provides no gradient direction for solvers to follow.
+
+\textbf{Q35: What is the \texttt{exact\_expected\_values} fast-path?} \\
+\textbf{A:} It allows the framework to temporarily bypass binomial noise and compute exact expected counts. The orchestrator uses this strictly during the search phase to provide smooth, continuous gradients for the optimizer at high distances.
+
+\textbf{Q36: Why must the optimization phase search for $\mu$ in log-space rather than linear space?} \\
+\textbf{A:} $\mu$ spans orders of magnitude ($10^{-4}$ to $0.6$). The secure region is often a tiny sliver near $10^{-3}$. A linear search uniformly places $99\%$ of its initial population far outside this sliver. Log-space ensures every magnitude decade receives equal population coverage.
+
+\textbf{Q37: How does fixing the RNG seed during the search phase prevent the optimizer from ``chasing statistical ghosts''?} \\
+\textbf{A:} If the seed varied, evaluating the exact same $(\mu, t_B)$ coordinate twice would yield different noisy rates. The optimizer would perceive this as a gradient and attempt to climb the noise variance rather than the true underlying physical landscape.
+
+\textbf{Q38: Why did setting a relative tolerance (\texttt{tol=1e-10}) in the DE parameters cause false early convergence?} \\
+\textbf{A:} Relative tolerance checks population spread. If the initial population lands entirely on the flat 0.0 insecure plateau, the population spread is exactly zero. The tolerance condition is instantly satisfied, causing the optimizer to prematurely terminate without searching.
+
+\textbf{Q39: How does the framework provide a gradient even when the secure key rate evaluates to exactly 0.0?} \\
+\textbf{A:} It returns a microscopic negative penalty (scaled by $10^{-9}$) based on the bound's phase-error bracket (e.g., $1 - h(E_p) - f \cdot h(E_z)$). This creates a gentle ``hill'' that guides the optimizer toward the security threshold, without ever outranking a genuine secure rate.
+
+\textbf{Q40: Mathematically justify why utilizing exact expected values during the gradient search does not violate finite-key statistical integrity.} \\
+\textbf{A:} Exact expected values are \textit{only} used as an internal heuristic to locate the optimal coordinates $(\mu^\star, t_B^\star)$. Once the optimizer halts, the \textit{final reported rate} at those coordinates is always strictly evaluated using genuine, noisy binomial sampling. The bounds only "see" the final noisy sample, maintaining absolute proof integrity.
+
+\end{document}
