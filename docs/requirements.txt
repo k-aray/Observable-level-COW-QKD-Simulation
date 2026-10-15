@@ -1,0 +1,4 @@
+strawberryfields
+scipy
+numpy
+matplotlib
